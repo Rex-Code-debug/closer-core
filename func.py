@@ -1,55 +1,41 @@
-from bs4 import BeautifulSoup
-import requests
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
+from config import logger
+from asyncddgs import aDDGS
+from tavily import AsyncTavilyClient
+from config import settings
+import asyncio
 
-def scrape_website(url: str):
-    print(f"👀 Reading: {url}")
-    session = requests.Session()
-    # Mocking a real browser
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
-    })
-    try:
-        response = session.get(url, timeout=10)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            # Kill script and style elements
-            for script in soup(["script", "style"]):
-                script.extract()    
+SCRAPE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        " AppleWebKit/537.36 (KHTML, like Gecko)"
+        " Chrome/137.0.0.0 Safari/537.36"
+    ),
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
-            text = soup.get_text(separator="\n")
-            # Clean empty lines
-            clean_text = "\n".join([line.strip() for line in text.splitlines() if line.strip()])
-            return clean_text[2000:7000] # Truncate to save context
-        else:
-            return f"Error: Status code {response.status_code}"
-    except Exception as e:
-        return f"Error: Could not scrape {url}. Reason: {str(e)}"
+# search_tool
+async def search_tool(query:str,max_result:int = 3) -> dict:
+    async with aDDGS(headers=SCRAPE_HEADERS) as addgs:
+        try:
+            results = await addgs.text(query, max_results=max_result)
+            if not results:
+                return "not found"
+        except Exception as e:
+            logger.error(f"Error occurred: {str(e)}")
+            return f"Error occurred: {str(e)}"
 
-def retriever_text(text):
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-    
-    if not text or text.startswith("Error"):
-        return None, None
-    
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=100
-    )
-    chunks = splitter.create_documents([text])
-    
-    return chunks, embeddings
+        return results
 
-def get_price_chunks(chunks, embeddings, query="price $ or ₹", top_k=5):
-    """
-    Retrieve top k chunks most relevant to pricing information
-    """
-    # Create vector store from chunks
-    vectorstore = FAISS.from_documents(chunks, embeddings)
-    
-    # Search for chunks similar to pricing-related query
-    price_chunks = vectorstore.similarity_search(query, k=top_k)
-    
-    return price_chunks
+# Scraping func
+
+
+tav = AsyncTavilyClient(api_key=settings.tavily_key)
+
+async def scrape_website(url: str) -> str:
+    response = await tav.extract(urls=url)
+
+    if response["results"]:
+        return response["results"][0]["raw_content"]
+
+    return ""

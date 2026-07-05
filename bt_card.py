@@ -1,30 +1,25 @@
-import os
 import operator
-import json
-import requests
-from dotenv import load_dotenv
+import aiofiles
+from schema import CompanyResearch,PricingInfo,NewsHeadlines, Urls
 from langchain_groq import ChatGroq
-from langchain_community.tools import DuckDuckGoSearchRun
 from typing import List, Annotated, TypedDict, Dict, Any
 from langchain_core.messages import BaseMessage
-from urllib.parse import urljoin
-from func import scrape_website, retriever_text, get_price_chunks
-from langgraph.graph import StateGraph, END
+from func import search_tool, scrape_website
+from langgraph.graph import StateGraph, START, END
+from config import settings, logger 
 
-load_dotenv()
+api_key = settings.groq_api_key
 
 model = ChatGroq(
     model="llama-3.1-8b-instant",
     temperature=0.0,
-    api_key=os.environ.get("GROQ_API_KEY")
+    api_key=api_key
 )
-
-search_tool = DuckDuckGoSearchRun()
 
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
     company_name: str
-    home_url: str
+    urls: Urls
     description: str
     competitors: list[str]
     pricing_info: List[Dict[str, Any]]
@@ -32,312 +27,186 @@ class AgentState(TypedDict):
     loop_count: int
     final_report: str
 
-def research_node(state: AgentState):
+
+async def research_node(state: AgentState):
     """Search for company's official website, description, and competitors."""
     query = state["company_name"]
     count = state.get("loop_count", 0)
 
-    print(f"🔍 Searching about {query}")
+    logger.info(f"Searching about {query}")
 
-    website_url = "Not found"
-    description = "Not available"
-    competitors = []
+    structured_model = model.with_structured_output(CompanyResearch)
 
     try:
-        search_results = search_tool.invoke(f"{query} official website competitors")
+        comp_results = await search_tool(f"{query} official website competitors")
+        price_results = await search_tool(f"pricing page of {query}")
+        info_res = await search_tool(f"{query} blog page",1)
         
-        prompt = f"""From these search results, extract the official website URL, a 1-sentence description of what they do, and list of competitors for {query}.
+        prompt = f"""From these search results, extract the official website URL, pricing page url, information url, a 1-sentence description of what they do, and list of competitors for {query}.
 
 Search results:
-{search_results}
+{comp_results} + {price_results} + {info_res}"""
 
-Return ONLY valid JSON in this exact format with no additional text, no markdown, no preamble:
-{{
-    "website_url": "https://example.com",
-    "description": "One sentence description here",
-    "competitors": ["competitor1", "competitor2", "competitor3"]
-}}"""
-        
-        response = model.invoke(prompt)
-        content = response.content.strip()
-        
-        # Clean markdown code blocks
-        if content.startswith("```"):
-            lines = content.split("\n")
-            content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
-            if content.startswith("json"):
-                content = content[4:].strip()
-        
-        dat_js = json.loads(content)
-        
-        website_url = dat_js.get('website_url', 'Not found')
-        description = dat_js.get('description', 'Not available')
-        competitors = dat_js.get('competitors', [])
-        
-        print(f"✅ Found website: {website_url}")
-        
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON parsing error: {str(e)}")
-        print(f"Response content: {response.content if 'response' in locals() else 'No response'}")
-        
+        result: CompanyResearch = await structured_model.ainvoke(prompt)
+
+        logger.info(f"Found website: {result.website_url}")
+
     except Exception as e:
-        print(f"❌ Error during search: {str(e)}")
-    
+        logger.error(f"Error during search: {str(e)}")
+        result = CompanyResearch(
+            website_url="Not found",
+            description="Not available",
+            competitors=[],
+            pricing_url="Not found",
+            info_url="Not found",
+        )
+
     return {
-        "home_url": website_url,
-        "description": description,
-        "competitors": competitors, 
-        "loop_count": count + 1
+        "urls": Urls(
+    home_url=result.website_url,
+    pricing_url=result.pricing_url,
+    info_url=result.info_url,
+),
+        "description": result.description,
+        "competitors": result.competitors,
+        "loop_count": count + 1,
     }
 
-def pricing_node(state: AgentState):
+async def pricing_node(state: AgentState):
     """Extract pricing information from pricing page"""
     pricing_info = state.get("pricing_info", [])
-    home_url = state.get("home_url", "")
-    
-    if not home_url or home_url == "Not found":
-        print("❌ No valid home URL found, skipping pricing extraction")
+    url = state.get("urls", "")
+    pricing_url = url.pricing_url
+
+    if not url or pricing_url == "Not found":
+        logger.error("No valid home URL and pricing url found skipping pricing extraction")
         return {"pricing_info": pricing_info}
-    
-    # Try multiple common pricing page URLs
-    pricing_urls = [
-        urljoin(home_url.rstrip('/') + '/', 'pricing'),
-        urljoin(home_url.rstrip('/') + '/', 'plans'),
-        urljoin(home_url.rstrip('/') + '/', 'price'),
-    ]
-    
+
     text = None
-    successful_url = None
-    
-    for url in pricing_urls:
-        try:
-            print(f"💰 Trying pricing URL: {url}")
-            text = scrape_website(url)
-            if text and len(text) > 100:  # Check if we got meaningful content
-                successful_url = url
-                print(f"✅ Successfully fetched content from: {url}")
-                break
-        except Exception as e:
-            print(f"⚠️ Failed to fetch {url}: {str(e)}")
-            continue
-    
+
+    try:
+        logger.info(f"Trying pricing URL: {pricing_url}")
+        text = await scrape_website(pricing_url)
+        if text and len(text) > 100:
+            logger.info(f"Successfully fetched content from: {pricing_url}")
+
+    except Exception as e:
+        logger.exception(f"Failed to fetch {url}: {str(e)}")
+
     if not text:
-        print("❌ No content retrieved from any pricing page")
+        logger.error("No content retrieved from pricing page")
         return {"pricing_info": pricing_info}
 
     try:
-        chunks, embeddings = retriever_text(text)
-        
-        if chunks is None or embeddings is None:
-            print("❌ Error: Could not create chunks or embeddings")
-            return {"pricing_info": pricing_info}
-        
-        price_chunks = get_price_chunks(chunks, embeddings, top_k=3)
-        combined_chunks = "\n\n---\n\n".join([chunk.page_content for chunk in price_chunks])
+        clean_text = text[1000:8000]
 
-        prompt = f"""You are a pricing research expert. Analyze the following pricing information and extract specific details.
+        prompt = f"""You are a pricing research expert. Analyze the following pricing page content and extract specific details.
 
-PRICING INFORMATION:
-{combined_chunks}
-
-TASK:
-Extract pricing information and return ONLY a valid JSON object with no additional text, explanation, or markdown formatting.
+PRICING PAGE CONTENT:
+{clean_text}
 
 RULES:
 - For "free_tier": return true if there's a free plan (look for "free", "free forever", "$0"), otherwise false
 - For "starter_plan": Find the CHEAPEST paid plan after free tier and include:
   * "name": the plan name (e.g., "Pro", "Basic", "Plus", "Starter")
   * "price": the price with currency (e.g., "$7.25/month", "₹500/month")
-  * If not found, use null for both
-- For "enterprise_plan": return true if enterprise/custom pricing exists (look for "Enterprise", "Custom", "Contact Sales"), otherwise false
+  * If not found, use null for both fields
+- For "enterprise_plan": return true if enterprise/custom pricing exists (look for "Enterprise", "Custom", "Contact Sales"), otherwise false"""
 
-IMPORTANT: Return ONLY the JSON object, no markdown code blocks, no explanations.
+        structured_model = model.with_structured_output(PricingInfo)
+        result: PricingInfo = await structured_model.ainvoke(prompt)
 
-JSON FORMAT:
-{{
-    "free_tier": true,
-    "starter_plan": {{
-        "name": "plan name or null",
-        "price": "price with currency or null"
-    }},
-    "enterprise_plan": true
-}}
-"""
-        
-        res = model.invoke(prompt)
-        
-        content = res.content.strip()
-        
-        # Clean markdown code blocks
-        if content.startswith("```"):
-            lines = content.split("\n")
-            content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
-            if content.startswith("json"):
-                content = content[4:].strip()
-        
-        res_json = json.loads(content)
-        pricing_info.append(res_json)
-        print(f"✅ Successfully extracted pricing information")
-        
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON parsing error in pricing_node: {str(e)}")
-        print(f"Response content: {content if 'content' in locals() else 'No content'}")
-        
+        pricing_info.append(result)
+        logger.info("Successfully extracted pricing information")
+
     except Exception as e:
-        print(f"❌ Error in pricing_node: {str(e)}")
-    
+        logger.exception(f"Error in pricing_node: {str(e)}")
+
     return {"pricing_info": pricing_info}
 
-def news_node(state: AgentState):
+
+async def news_node(state: AgentState):
     """Extract top 3 news headlines from blog page"""
-    
-    home_url = state.get('home_url', '')
-    
-    if not home_url or home_url == "Not found":
-        print("❌ No valid home URL found, skipping news extraction")
+
+    urls = state.get('urls', '')
+    news_url = urls.info_url
+
+    if not urls or news_url == "Not found":
+        logger.error("No valid home URL found, skipping news extraction")
         return {"news_headlines": []}
-    
-    # Try multiple common blog/news page URLs
-    news_urls = [
-        urljoin(home_url.rstrip('/') + '/', 'blog'),
-        urljoin(home_url.rstrip('/') + '/', 'news'),
-        urljoin(home_url.rstrip('/') + '/', 'press'),
-        urljoin(home_url.rstrip('/') + '/', 'updates'),
-    ]
-    
+
     text = None
-    successful_url = None
-    
-    for url in news_urls:
-        try:
-            print(f"📰 Trying news URL: {url}")
-            res = requests.get(url=url, timeout=10)
-            
-            if res.status_code == 200:
-                text = scrape_website(url)
-                if text and len(text) > 100:  # Check if we got meaningful content
-                    successful_url = url
-                    print(f"✅ Successfully fetched content from: {url}")
-                    break
-        except Exception as e:
-            print(f"⚠️ Failed to fetch {url}: {str(e)}")
-            continue
-    
+    try:
+        logger.info(f"Trying news URL: {news_url}")
+        text = await scrape_website(news_url)
+        if text and len(text) > 100:
+            logger.info(f"Successfully fetched content from: {news_url}")
+
+    except Exception as e:
+            logger.exception(f"Failed to fetch {news_url}: {str(e)}")
+
     if not text:
-        print("❌ No content retrieved from any news/blog page")
+        logger.error("No content retrieved from any news/blog page")
         return {"news_headlines": []}
 
     try:
-        chunks, embeddings = retriever_text(text)
-        
-        if chunks is None or embeddings is None:
-            print("❌ Error: Could not retrieve text or create chunks")
-            return {"news_headlines": []}
-        
-        # Get top chunks with headline/news content
-        chunks = get_price_chunks(chunks, embeddings, query="blog headline article title news", top_k=5)
-        combined_chunks = "\n\n---\n\n".join([chunk.page_content for chunk in chunks])
+        clean_text = text[:5000]
 
-        prompt = f"""You are a content analyst expert. Analyze the following blog/news content and extract the top 3 headlines.
+        prompt = f"""You are a content analyst expert. Analyze the following blog/news page content and extract the top 3 headlines with 1 line briefing about each lines.
 
 CONTENT:
-{combined_chunks}
-
-TASK:
-Extract the top 3 most prominent headlines or article titles from the content above.
+{clean_text}
 
 RULES:
-- Find actual headlines/titles of articles or blog posts
-- Headlines should be clear, complete sentences or phrases
+- Find actual headlines or titles of articles or blog posts
+- Headlines should be clear and complete phrases
 - Prioritize the most recent or featured articles
 - Do not include navigation text, menu items, or generic labels
-- Each headline should be meaningful and represent an actual article
-- If you find fewer than 3 headlines, return only what you find
+- Each headline should represent an actual article
+- If fewer than 3 headlines are found, return only what you find
+- Write brief 1 line about each healines explaing what is for that headline"""
 
-IMPORTANT: Return ONLY a valid JSON object with no additional text, explanation, or markdown formatting.
+        structured_model = model.with_structured_output(NewsHeadlines)
+        result: NewsHeadlines = await structured_model.ainvoke(prompt)
 
-JSON FORMAT:
-{{
-  "headlines": [
-    {{
-      "title": "First headline text",
-      "position": 1
-    }},
-    {{
-      "title": "Second headline text",
-      "position": 2
-    }},
-    {{
-      "title": "Third headline text",
-      "position": 3
-    }}
-  ]
-}}
+        logger.info(f"Successfully extracted {len(result.headlines)} headlines")
+        return {"news_headlines": result.headlines}
 
-If fewer than 3 headlines are found, return only the available ones.
-"""
-
-        response = model.invoke(prompt)
-        
-        # Parse and clean the response
-        content = response.content.strip()
-        
-        # Clean markdown code blocks
-        if content.startswith("```"):
-            lines = content.split("\n")
-            content = "\n".join(lines[1:-1]) if len(lines) > 2 else content
-            if content.startswith("json"):
-                content = content[4:].strip()
-        
-        # Validate JSON
-        try:
-            headlines_data = json.loads(content)
-            print(f"✅ Successfully extracted {len(headlines_data.get('headlines', []))} headlines")
-            return {"news_headlines": headlines_data.get('headlines', [])}
-            
-        except json.JSONDecodeError as e:
-            print(f"⚠️ Failed to parse JSON: {str(e)}")
-            return {"news_headlines": []}
-            
     except Exception as e:
-        print(f"❌ Error in news_node: {str(e)}")
+        logger.exception(f"Error in news_node: {str(e)}")
         return {"news_headlines": []}
 
-def writer_node(state: AgentState):
+
+async def writer_node(state: AgentState):
     """Generate and save the final Battle Card report."""
-    
-    # Initialize the writer model with higher temperature for better writing
+
     model_writer = ChatGroq(
-        model="llama-3.1-8b-instant",
+        model="llama-3.3-70b-versatile",
         temperature=0.7,
-        api_key=os.environ.get("GROQ_API_KEY")
+        api_key=api_key
     )
-    
-    # Extract data from state
+
     company_name = state.get("company_name", "Unknown Company")
     description = state.get("description", "Not available")
     competitors = state.get("competitors", [])
     pricing_info = state.get("pricing_info", [])
     news_headlines = state.get("news_headlines", [])
-    home_url = state.get("home_url", "Not found")
-    
-    # Format competitors
+    urls = state.get("urls", "Not found")
+
+    # Formating competitors
     competitors_text = ", ".join(competitors) if competitors else "Unknown"
-    
-    # Format pricing information
-    if pricing_info and len(pricing_info) > 0:
-        pricing_data = pricing_info[0]  # Get the first pricing info
-        
-        free_tier = "✅ Yes" if pricing_data.get("free_tier", False) else "❌ No"
-        
-        starter_plan = pricing_data.get("starter_plan", {})
-        if starter_plan and starter_plan.get("name") and starter_plan.get("price"):
-            starter_text = f"{starter_plan['name']}: {starter_plan['price']}"
-        else:
-            starter_text = "Unknown"
-        
-        enterprise = "✅ Available" if pricing_data.get("enterprise_plan", False) else "❌ Not Available"
-        
+
+    # Formating pricing
+    if pricing_info:
+        pricing_data: PricingInfo = pricing_info[0]
+        free_tier = "Yes" if pricing_data.free_tier else "No"
+        starter_plan = pricing_data.starter_plan
+        starter_text = (
+            f"{starter_plan.name}: {starter_plan.price}"
+            if starter_plan and starter_plan.name and starter_plan.price
+            else "Unknown"
+        )
+        enterprise = "Available" if pricing_data.enterprise_plan else "Not Available"
         pricing_text = f"""
 - **Free Tier:** {free_tier}
 - **Starter Plan:** {starter_text}
@@ -345,15 +214,16 @@ def writer_node(state: AgentState):
 """
     else:
         pricing_text = "Unknown"
-    
-    # Format news headlines
-    if news_headlines and len(news_headlines) > 0:
-        news_text = "\n".join([f"{i+1}. {headline.get('title', 'N/A')}" 
-                               for i, headline in enumerate(news_headlines)])
+
+    # Formating headlines
+    if news_headlines:
+        news_text = "\n".join([
+            f"{i + 1}. {headline.title}"
+            for i, headline in enumerate(news_headlines)
+        ])
     else:
         news_text = "No recent news available"
-    
-    # Create the prompt for the LLM
+
     prompt = f"""You are a Sales Assistant. Write a professional Battle Card for {company_name}.
 
 INSTRUCTIONS:
@@ -366,7 +236,7 @@ INSTRUCTIONS:
 DATA PROVIDED:
 ---
 Company: {company_name}
-Website: {home_url}
+Website: {urls}
 Description: {description}
 Competitors: {competitors_text}
 
@@ -375,11 +245,9 @@ Pricing Information:
 
 Recent News/Blog Headlines:
 {news_text}
-
 ---
 
 BATTLE CARD LAYOUT:
-Create a battle card with these sections:
 
 # Battle Card: {company_name}
 
@@ -399,79 +267,62 @@ Create a battle card with these sections:
 [Brief insights on how to position against competitors based on the data]
 
 ---
-
 Write the complete battle card now:"""
 
-    print(f"📝 Generating Battle Card for {company_name}...")
-    
+    logger.info(f"Generating Battle Card for {company_name}...")
+
     try:
-        # Generate the battle card using LLM
-        response = model_writer.invoke(prompt)
+        response = await model_writer.ainvoke(prompt)
         battle_card = response.content
-        
-        # Save to file
-        filename = f"{company_name.replace(' ', '_').lower()}_battle_card.md"
-        
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(battle_card)
-        
-        print(f"✅ Battle Card saved to {filename}")
-        
-        # Also save raw data as JSON for reference
-        raw_data = {
-            "company_name": company_name,
-            "website": home_url,
-            "description": description,
-            "competitors": competitors,
-            "pricing_info": pricing_info,
-            "news_headlines": news_headlines
-        }
-        
-        json_filename = f"{company_name.replace(' ', '_').lower()}_data.json"
-        with open(json_filename, "w", encoding="utf-8") as f:
-            json.dump(raw_data, f, indent=2, ensure_ascii=False)
-        
-        print(f"✅ Raw data saved to {json_filename}")
-        
-        # Return updated state
+
+        # Async file writing
+        filename = f"cards/{company_name.replace(' ', '_').lower()}_battle_card.md"
+        async with aiofiles.open(filename, "w", encoding="utf-8") as f:
+            await f.write(battle_card)
+
+        logger.info(f"Battle Card saved to {filename}")
+
         return {
             "final_report": battle_card,
             "loop_count": state.get("loop_count", 0) + 1
         }
-        
+
     except Exception as e:
-        print(f"❌ Error generating battle card: {str(e)}")
-        error_message = f"# Error Generating Battle Card\n\nError: {str(e)}"
-        
+        logger.exception(f"Error generating battle card: {str(e)}")
         return {
-            "final_report": error_message,
+            "final_report": f"# Error Generating Battle Card\n\nError: {str(e)}",
             "loop_count": state.get("loop_count", 0) + 1
         }
 
 # Build the graph
 builder = StateGraph(AgentState)
 
+# Adding nodes
 builder.add_node("detective", research_node)
 builder.add_node("pricing", pricing_node)
 builder.add_node("news", news_node)
 builder.add_node("editor", writer_node)
 
-# Add edges to define the workflow
-builder.set_entry_point("detective")
+# Adding edges to define the workflow
+builder.add_edge(START,"detective")
 builder.add_edge("detective", "pricing")
 builder.add_edge("pricing", "news")
 builder.add_edge("news", "editor")
 builder.add_edge("editor", END)
 
-# Compile the graph
+# Compiling the graph
 graph = builder.compile()
 
-def run_battle_card_generator(company_name: str):
-    """Run the battle card generator for a given company."""
+async def run_battle_card_generator(company_name: str):
+    """Runs the battle card generator for a given company."""
     initial_state = {
         "messages": [],
         "company_name": company_name,
-        "home_url": "",
+        "urls": Urls(
+            home_url="",
+            pricing_url="",
+            info_url=""
+        ),
         "description": "",
         "competitors": [],
         "pricing_info": [],
@@ -480,29 +331,31 @@ def run_battle_card_generator(company_name: str):
         "final_report": ""
     }
     
-    print(f"\n{'='*60}")
-    print(f"🚀 Starting Battle Card Generation for: {company_name}")
-    print(f"{'='*60}\n")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Starting Battle Card Generation for: {company_name}")
+    logger.info(f"{'='*60}\n")
     
     try:
-        result = graph.invoke(initial_state)
+        result = await graph.ainvoke(initial_state)
         
-        print(f"\n{'='*60}")
-        print(f"✅ Battle Card Generation Complete!")
-        print(f"{'='*60}\n")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Battle Card Generation Complete!")
+        logger.info(f"{'='*60}\n")
         
         return result
     except Exception as e:
-        print(f"\n❌ Error during execution: {str(e)}")
+        logger.exception(f"\nError during execution: {str(e)}")
         return None
 
-# Example usage
-if __name__ == "__main__":
-    # Test with a company name
-    company_name = input("Enter company name: ")
-    result = run_battle_card_generator(company_name)
-    
-    if result:
-        print("\n📊 Final Report Preview:")
-        print("-" * 60)
-        print(result.get("final_report", "No report generated")[:500] + "...")
+# Test run
+# async def main():
+#     company_name = input("Enter company name: ")
+#     result = await run_battle_card_generator(company_name)
+
+#     if result:
+#         logger.info("\n📊 Final Report Preview:")
+#         logger.info("-" * 60)
+#         logger.info(result.get("final_report", "No report generated")[:500] + "...")
+
+# if __name__ == "__main__":
+#     asyncio.run(main())
