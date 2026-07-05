@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     app_name: str
     groq_api_key: str
     tavily_key:str
+    database_url:str
     max_retries: int = 3
     debug_mode: bool = False
 
