@@ -5,7 +5,7 @@ from sqlalchemy import Column, DateTime, func, Numeric
 from typing import Optional
 from decimal import Decimal
 
-class companies(SQLModel, table=True):
+class Companies(SQLModel, table=True):
     __tablename__ = "companies"
 
     id: uuid.UUID = Field(
@@ -56,7 +56,7 @@ class ResearchRun(SQLModel, table=True):
         )
     )
 
-class compititors(SQLModel, table=True):
+class Compititors(SQLModel, table=True):
     __tablename__ = "compititors"
 
     id: uuid.UUID =  Field(
@@ -68,7 +68,7 @@ class compititors(SQLModel, table=True):
     )
     compititors_name: str
 
-class pricing_data(SQLModel,table=True):
+class PricingData(SQLModel,table=True):
     __tablename__ = "pricing_data"
 
     id: uuid.UUID = Field(
@@ -85,7 +85,7 @@ class pricing_data(SQLModel,table=True):
         sa_column=Column(Numeric(precision=10, scale=2), nullable=False),
     )
 
-class battle_card(SQLModel, table=True):
+class BattleCard(SQLModel, table=True):
     __tablename__ = "battle_card"
 
     id: uuid.UUID = Field(
