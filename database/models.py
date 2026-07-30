@@ -79,11 +79,11 @@ class PricingData(SQLModel,table=True):
         foreign_key="companies.id"
     )
     free_tier: bool = Field(default=False)
-    starter_plan: bool = Field(default=False)
     starter_price: Optional[Decimal] = Field(
         default=Decimal("0.00"),
         sa_column=Column(Numeric(precision=10, scale=2), nullable=False),
     )
+    enterprise_plan: bool = Field(default=False)
 
 class BattleCard(SQLModel, table=True):
     __tablename__ = "battle_card"

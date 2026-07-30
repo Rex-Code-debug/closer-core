@@ -2,7 +2,7 @@ import operator
 import aiofiles
 from schema import CompanyResearch,PricingInfo,NewsHeadlines, Urls
 from langchain_groq import ChatGroq
-from typing import List, Annotated, TypedDict, Dict, Any
+from typing import List, Annotated, TypedDict, Optional
 from langchain_core.messages import BaseMessage
 from func import search_tool, scrape_website
 from langgraph.graph import StateGraph, START, END
@@ -22,7 +22,7 @@ class AgentState(TypedDict):
     urls: Urls
     description: str
     competitors: list[str]
-    pricing_info: List[Dict[str, Any]]
+    pricing_info: PricingInfo
     news_headlines: list
     loop_count: int
     final_report: str
@@ -116,7 +116,7 @@ RULES:
         structured_model = model.with_structured_output(PricingInfo)
         result: PricingInfo = await structured_model.ainvoke(prompt)
 
-        pricing_info.append(result)
+        pricing_info = result
         logger.info("Successfully extracted pricing information")
 
     except Exception as e:
