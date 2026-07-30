@@ -66,7 +66,9 @@ class Compititors(SQLModel, table=True):
     company_id: uuid.UUID = Field(
         foreign_key="companies.id"
     )
-    compititors_name: str
+    compititors_name: str =Field(
+        nullable=True
+    )
 
 class PricingData(SQLModel,table=True):
     __tablename__ = "pricing_data"
