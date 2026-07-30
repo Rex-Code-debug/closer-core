@@ -178,7 +178,7 @@ async def writer_node(state: AgentState):
     company_name = state.get("company_name", "Unknown Company")
     description = state.get("description", "Not available")
     competitors = state.get("competitors", [])
-    pricing_info = state.get("pricing_info", [])
+    pricing_info = state.get("pricing_info", "")
     news_headlines = state.get("news_headlines", [])
     urls = state.get("urls", "Not found")
 
@@ -187,15 +187,14 @@ async def writer_node(state: AgentState):
 
     # Formating pricing
     if pricing_info:
-        pricing_data: PricingInfo = pricing_info[0]
-        free_tier = "Yes" if pricing_data.free_tier else "No"
-        starter_plan = pricing_data.starter_plan
+        free_tier = pricing_info.free_tier
+        starter_plan = pricing_info.starter_plan
         starter_text = (
             f"{starter_plan.name}: {starter_plan.price}"
             if starter_plan and starter_plan.name and starter_plan.price
             else "Unknown"
         )
-        enterprise = "Available" if pricing_data.enterprise_plan else "Not Available"
+        enterprise = pricing_info.enterprise_plan
         pricing_text = f"""
 - **Free Tier:** {free_tier}
 - **Starter Plan:** {starter_text}
