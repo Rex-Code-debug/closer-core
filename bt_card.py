@@ -9,6 +9,8 @@ from sqlmodel import Session
 from database.connection import engine
 from schema import AgentState
 
+logger.info(f"bt_card.py loaded from: {__file__} | marker: v2-fix")
+
 api_key = settings.groq_api_key
 
 model = ChatGroq(
@@ -103,13 +105,26 @@ RULES:
 - For "enterprise_plan": return true if enterprise/custom pricing exists (look for "Enterprise", "Custom", "Contact Sales"), otherwise false"""
 
         structured_model = model.with_structured_output(PricingInfo)
-        result: PricingInfo = await structured_model.ainvoke(prompt)
+        result = await structured_model.ainvoke(prompt)
 
-        pricing_info = result
+        logger.info(f"structured_output result type: {type(result)!r}")
+
+        if isinstance(result, PricingInfo):
+            pricing_info = result
+        elif isinstance(result, dict):
+            pricing_info = PricingInfo.model_validate(result)
+            logger.warning("Coerced dict result into PricingInfo instance")
+        else:
+            logger.error(
+                f"Unexpected structured_output type {type(result)!r}: {result!r}"
+            )
+            pricing_info = None
+
         logger.info("Successfully extracted pricing information")
 
     except Exception as e:
         logger.exception(f"Error in pricing_node: {str(e)}")
+        pricing_info = None
 
     return {"pricing_info": pricing_info}
 
@@ -187,23 +202,47 @@ async def writer_node(state: AgentState):
 
     # Formating pricing
     if pricing_info:
-        free_tier = pricing_info.free_tier
-        logger.info(type(pricing_info))
-        logger.info(repr(pricing_info))
-        starter_plan = pricing_info.starter_plan
-        logger.info(type(pricing_info.starter_plan))
-        logger.info(repr(pricing_info.starter_plan))
-        starter_text = (
-            f"{starter_plan.name}: {starter_plan.price}"
-            if starter_plan and starter_plan.name and starter_plan.price
-            else "Unknown"
-        )
-        enterprise = pricing_info.enterprise_plan
-        pricing_text = f"""
+        # Log diagnostics FIRST, before any attribute/subscript access,
+        # so we can see exactly what type/shape pricing_info has if
+        # something downstream still fails.
+        logger.info(f"pricing_info type: {type(pricing_info)!r}")
+        logger.info(f"pricing_info repr: {pricing_info!r}")
+
+        # Defensive coercion: some LLM structured-output paths can return
+        # a plain dict (or something dict-like) instead of a PricingInfo
+        # instance. Coerce it before touching attributes.
+        if isinstance(pricing_info, dict):
+            try:
+                pricing_info = PricingInfo.model_validate(pricing_info)
+                logger.info("Coerced dict pricing_info into PricingInfo model")
+            except Exception as e:
+                logger.error(f"Failed to coerce pricing_info dict: {e}")
+                pricing_info = None
+
+        if pricing_info is not None and isinstance(pricing_info, PricingInfo):
+            try:
+                free_tier = pricing_info.free_tier
+                starter_plan = pricing_info.starter_plan
+                enterprise = pricing_info.enterprise_plan
+                starter_text = (
+                    f"{starter_plan.name}: {starter_plan.price}"
+                    if starter_plan and starter_plan.name and starter_plan.price
+                    else "Unknown"
+                )
+                pricing_text = f"""
 - **Free Tier:** {free_tier}
 - **Starter Plan:** {starter_text}
 - **Enterprise Plan:** {enterprise}
 """
+            except Exception as e:
+                logger.exception(f"Unexpected error reading pricing_info fields: {e}")
+                pricing_text = "Unknown"
+        else:
+            logger.error(
+                f"pricing_info is not a valid PricingInfo instance "
+                f"(type={type(pricing_info)!r}); defaulting to Unknown"
+            )
+            pricing_text = "Unknown"
     else:
         pricing_text = "Unknown"
 

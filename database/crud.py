@@ -54,28 +54,26 @@ def save_company_and_run(
         )
         session.add(db_compit)
     
-    # 4. Create the Pricing Model
-    if existing_company:
-        if state.get("pricing_info"):
-            db_price = PricingData(
-                company_id=db_company.id,
-                free_tier=state["pricing_info"].free_tier,
-                starter_price= state["pricing_info"].starter_plan.price,
-                enterprise_plan= state["pricing_info"].enterprise_plan
-            )
-            session.add(db_price)
-    
-    # 5. Create the Battle Card
-    if existing_company:
-        db_card = BattleCard(
-            company_id= db_company.id,
-            battle_card= state["final_report"]
+    # 4. Create the Pricing Model (every run, not just repeat companies)
+    if state.get("pricing_info"):
+        db_price = PricingData(
+            company_id=db_company.id,
+            free_tier=state["pricing_info"].free_tier,
+            starter_price= state["pricing_info"].starter_plan.price,
+            enterprise_plan= state["pricing_info"].enterprise_plan
         )
+        session.add(db_price)
+    
+    # 5. Create the Battle Card (every run, not just repeat companies)
+    db_card = BattleCard(
+        company_id= db_company.id,
+        battle_card= state["final_report"]
+    )
+    session.add(db_card)
     
     session.commit()
-    session.refresh()
+    session.refresh(db_company)
     
     return {
         "message":"Company Data Saved Successfully"
     }
-            
