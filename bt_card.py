@@ -186,9 +186,13 @@ async def writer_node(state: AgentState):
     competitors_text = ", ".join(competitors) if competitors else "Unknown"
 
     # Formating pricing
-    if pricing_info:
+    if pricing_info is not None:
         free_tier = pricing_info.free_tier
+        logger.info(type(pricing_info))
+        logger.info(repr(pricing_info))
         starter_plan = pricing_info.starter_plan
+        logger.info(type(pricing_info.starter_plan))
+        logger.info(repr(pricing_info.starter_plan))
         starter_text = (
             f"{starter_plan.name}: {starter_plan.price}"
             if starter_plan and starter_plan.name and starter_plan.price
@@ -313,7 +317,7 @@ async def run_battle_card_generator(company_name: str):
         ),
         "description": "",
         "competitors": [],
-        "pricing_info": [],
+        "pricing_info": None,
         "news_headlines": [],
         "loop_count": 0,
         "final_report": ""

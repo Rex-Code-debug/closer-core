@@ -39,7 +39,7 @@ class AgentState(TypedDict):
     urls: Urls
     description: str
     competitors: list[str]
-    pricing_info: PricingInfo
+    pricing_info: Optional[PricingInfo]
     news_headlines: list
     loop_count: int
     final_report: str
