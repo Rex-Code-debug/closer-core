@@ -63,7 +63,7 @@ Search results:
 
 async def pricing_node(state: AgentState):
     """Extract pricing information from pricing page"""
-    pricing_info = state.get("pricing_info", "")
+    pricing_info = state.get("pricing_info", None)
     url = state.get("urls", "")
     pricing_url = url.pricing_url
 
@@ -186,7 +186,7 @@ async def writer_node(state: AgentState):
     competitors_text = ", ".join(competitors) if competitors else "Unknown"
 
     # Formating pricing
-    if pricing_info is not None:
+    if pricing_info:
         free_tier = pricing_info.free_tier
         logger.info(type(pricing_info))
         logger.info(repr(pricing_info))
