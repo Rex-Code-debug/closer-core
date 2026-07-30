@@ -63,7 +63,7 @@ Search results:
 
 async def pricing_node(state: AgentState):
     """Extract pricing information from pricing page"""
-    pricing_info = state.get("pricing_info", [])
+    pricing_info = state.get("pricing_info", "")
     url = state.get("urls", "")
     pricing_url = url.pricing_url
 
