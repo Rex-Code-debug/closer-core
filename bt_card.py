@@ -1,15 +1,13 @@
-import operator
 import aiofiles
 from schema import CompanyResearch,PricingInfo,NewsHeadlines, Urls
 from langchain_groq import ChatGroq
-from typing import List, Annotated, TypedDict, Optional
-from langchain_core.messages import BaseMessage
 from func import search_tool, scrape_website
 from langgraph.graph import StateGraph, START, END
 from config import settings, logger 
 from database.crud import save_company_and_run
 from sqlmodel import Session
 from database.connection import engine
+from schema import AgentState
 
 api_key = settings.groq_api_key
 
@@ -18,18 +16,6 @@ model = ChatGroq(
     temperature=0.0,
     api_key=api_key
 )
-
-class AgentState(TypedDict):
-    messages: Annotated[List[BaseMessage], operator.add]
-    company_name: str
-    urls: Urls
-    description: str
-    competitors: list[str]
-    pricing_info: PricingInfo
-    news_headlines: list
-    loop_count: int
-    final_report: str
-
 
 async def research_node(state: AgentState):
     """Search for company's official website, description, and competitors."""

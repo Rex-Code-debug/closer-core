@@ -1,7 +1,7 @@
 from database.connection import get_session
 from fastapi import Depends
 from database.models import Companies,ResearchRun, Compititors, PricingData, BattleCard
-from bt_card import AgentState
+from schema import AgentState
 from sqlmodel import Session
 
 from fastapi import Depends

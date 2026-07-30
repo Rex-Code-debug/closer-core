@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
-from typing import List,Optional
+from typing import List,Optional, TypedDict, Annotated
+import operator
+from langchain_core.messages import BaseMessage
 
 class Urls(BaseModel):
     home_url: str = Field(description="Official home url of website")
@@ -30,3 +32,14 @@ class Headline(BaseModel):
 
 class NewsHeadlines(BaseModel):
     headlines: List[Headline] = Field(description="Top 3 most prominent headlines or article titles")
+
+class AgentState(TypedDict):
+    messages: Annotated[List[BaseMessage], operator.add]
+    company_name: str
+    urls: Urls
+    description: str
+    competitors: list[str]
+    pricing_info: PricingInfo
+    news_headlines: list
+    loop_count: int
+    final_report: str
