@@ -7,6 +7,9 @@ from langchain_core.messages import BaseMessage
 from func import search_tool, scrape_website
 from langgraph.graph import StateGraph, START, END
 from config import settings, logger 
+from database.crud import save_company_and_run
+from sqlmodel import Session
+from database.connection import engine
 
 api_key = settings.groq_api_key
 
@@ -336,12 +339,23 @@ async def run_battle_card_generator(company_name: str):
     logger.info(f"{'='*60}\n")
     
     try:
+        
+        # Langraph pipeline
         result = await graph.ainvoke(initial_state)
         
         logger.info(f"\n{'='*60}")
         logger.info(f"Battle Card Generation Complete!")
         logger.info(f"{'='*60}\n")
         
+        # DataBase pipeline
+        if result:
+            logger.info("Triggering database saving pipeline...")
+    
+        # Opening a fresh session
+            with Session(engine) as db_session:
+                db_status = save_company_and_run(state=result, session=db_session)        
+                logger.info(f"Database storage response: {db_status.get('message')}")
+                
         return result
     except Exception as e:
         logger.exception(f"\nError during execution: {str(e)}")
