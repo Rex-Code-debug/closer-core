@@ -2,7 +2,7 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
-from database.models import companies, compititors, battle_card, ResearchRun, pricing_data
+from database.models import Companies, Compititors, BattleCard, ResearchRun, PricingData
 from sqlmodel import SQLModel
 
 from alembic import context
