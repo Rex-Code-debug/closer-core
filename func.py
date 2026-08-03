@@ -2,7 +2,6 @@ from config import logger
 from asyncddgs import aDDGS
 from tavily import AsyncTavilyClient
 from config import settings
-import asyncio
 
 SCRAPE_HEADERS = {
     "User-Agent": (
