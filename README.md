@@ -172,7 +172,7 @@ CloserCore/
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/closer-core.git
+git clone https://github.com/rex-code-debug/closer-core.git
 cd closer-core
 
 # Create virtual environment
@@ -293,8 +293,8 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ## 📬 Contact
 
-**Project Lead:** [Dhananjay Mishra]  
-**Email:** [mdhananjay776@gmail.com  
+**Project Lead:** Dhananjay Mishra 
+**Email:** mdhananjay776@gmail.com  
 **GitHub:** [Rex-Code-debug](https://github.com/rex-code-debug)
 
 ---
