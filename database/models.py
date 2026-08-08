@@ -1,4 +1,4 @@
-from sqlmodel import Field, SQLModel, text
+from sqlmodel import Field, SQLModel, Relationship
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, DateTime, func, Numeric
@@ -23,6 +23,10 @@ class Companies(SQLModel, table=True):
             index=True,
             )
     )
+    
+    research_runs: list["ResearchRun"] = Relationship(back_populates="company")
+    
+    battle_cards: list["BattleCard"] = Relationship(back_populates= "company")
 
 class ResearchRun(SQLModel, table=True):
     __tablename__: str = "research_runs"
@@ -35,6 +39,11 @@ class ResearchRun(SQLModel, table=True):
     company_id: uuid.UUID = Field(
         foreign_key="companies.id"
     )
+    
+    company: Companies = Relationship(
+        back_populates="research_runs"
+    )
+    
     status: str = Field(default="pending", index=True)
 
     # Automatically set by the database on row creation
@@ -106,3 +115,8 @@ class BattleCard(SQLModel, table=True):
             nullable=False
         )
     )
+    
+    company: Companies = Relationship(
+        back_populates="battle_cards"
+    )
+    

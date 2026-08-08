@@ -2,14 +2,15 @@ from database.connection import get_session
 from fastapi import Depends
 from database.models import Companies,ResearchRun, Compititors, PricingData, BattleCard
 from schema import AgentState
-from sqlmodel import Session
 
 from fastapi import Depends
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 from decimal import Decimal, InvalidOperation
 import re
+import json
+import uuid
 
-
+# Create Company Pricing Battle Card
 def parse_starter_price(raw_price) -> Decimal:
     """Extract a clean Decimal from free-text pricing strings like
     '$25/month', '$ 24.90 / user / month', 'Contact Sales', or None.
@@ -95,3 +96,77 @@ def save_company_and_run(
     return {
         "message":"Company Data Saved Successfully"
     }
+
+# read_research
+import json
+from datetime import datetime
+
+def read_orm(data: list) -> str:
+    if len(data) >= 1:
+        data_dict = [
+            {
+                "run_id": row.id,
+                "company": row.name,
+                "status": row.status,
+                "created_at": row.created_at.isoformat() if isinstance(row.created_at, datetime) else str(row.created_at)
+            } 
+            for row in data
+        ]
+        json_array = json.dumps(data_dict, indent=4)
+    else:
+        json_array = json.dumps([])
+    
+    return json_array
+
+
+# get_resreach
+def read_research(session:Session):
+    statement = select(
+        ResearchRun.id,
+        Companies.name,
+        ResearchRun.status,
+        Companies.created_at
+    ).join(Companies, ResearchRun.company_id == Companies.id)
+    
+    result = session.exec(statement).all()
+    
+    return read_orm(result)
+
+# get_company
+def read_company(company_name:str, session:Session):
+    statement = (
+    select(
+        Companies.id,
+        Companies.name,
+        Companies.website,
+        Companies.description,
+        BattleCard.id,
+    )
+    .join(
+        BattleCard,
+        Companies.id == BattleCard.company_id
+    )
+    .where(
+        func.lower(Companies.name) == company_name.lower()
+    )
+)
+    res = session.exec(statement).first()
+    
+    return read_orm(res)
+
+
+# get_battle_card
+def get_card(btc_id:uuid.UUID, session: Session):
+    statement = select(
+        Companies.name,
+        BattleCard.battle_card
+    ).join(
+        Companies,
+        BattleCard.id == BattleCard.company_id
+    ).where(
+        BattleCard.id == btc_id
+    )
+    
+    res = session.exec(statement).first()
+    
+    return read_orm(res)
